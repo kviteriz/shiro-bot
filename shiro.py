@@ -17,12 +17,11 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# Archivos de Google Sheets
 VENTAS_SHEET_NAME = os.getenv("VENTAS_SHEET_NAME", "Mis Criptos")
 COMPRAS_SHEET_NAME = os.getenv("COMPRAS_SHEET_NAME", "Mis Compras")
 WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "Portafolio")
 
-# Mapeo de nombres a IDs de CoinGecko (actualizado)
+# ========== MAPEO COMPLETO DE COINGECKO ==========
 MAPEO_COINGECKO = {
     # Grandes capitalizaciones
     'btc': 'bitcoin',
@@ -49,16 +48,16 @@ MAPEO_COINGECKO = {
     'aero': 'aerodrome-finance',
     
     # Tokens de SUI
-    'deep': 'deep-book',
+    'deep': 'deep',
     'cpool': 'clearpool',
     
     # Verificados uno por uno
-    'rhea': 'rhea',           # ✅ Verificado
-    'sauce': 'sauce',         # ✅ Verificado (SaucerSwap)
-    'aster': 'aster',         # ✅ Verificado (Aster)
-    'astr': 'aster',          # Alias
-    'met': 'meteora',         # ✅ Verificado (Meteora)
-    'plume': 'plume',         # ✅ Verificado (Plume)
+    'rhea': 'rhea',
+    'sauce': 'sauce',
+    'aster': 'aster',
+    'astr': 'aster',
+    'met': 'meteora',
+    'plume': 'plume',
     
     # Alias adicionales
     'meteora': 'meteora',
@@ -68,7 +67,6 @@ MAPEO_COINGECKO = {
 def enviar_telegram(mensaje):
     """Shiro envía alerta a Telegram"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Telegram no configurado. Las alertas no se enviarán.")
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -76,10 +74,32 @@ def enviar_telegram(mensaje):
             "chat_id": TELEGRAM_CHAT_ID,
             "text": f"🦈 *SHIRO BOT*\n\n{mensaje}",
             "parse_mode": "Markdown"
-        }, timeout=15)  # Aumentado de 5 a 15 segundos
+        }, timeout=15)
         print("📱 Shiro envió alerta a Telegram")
     except Exception as e:
         print(f"❌ Error Telegram: {e}")
+
+# ========== FUNCIÓN CON REINTENTOS PARA COINGECKO ==========
+def consultar_coingecko_con_reintento(url, max_intentos=5, espera_inicial=2):
+    """Consulta CoinGecko con reintentos automáticos para evitar rate limit"""
+    espera = espera_inicial
+    for intento in range(max_intentos):
+        try:
+            response = requests.get(url, timeout=15)
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 429:
+                print(f"  ⚠️ Rate limit (intento {intento+1}/{max_intentos}), esperando {espera}s...")
+                time.sleep(espera)
+                espera *= 2  # Espera exponencial: 2, 4, 8, 16...
+            else:
+                print(f"  ⚠️ Error HTTP {response.status_code} para {url}")
+                return None
+        except Exception as e:
+            print(f"  ⚠️ Error en reintento {intento+1}: {e}")
+            time.sleep(espera)
+            espera *= 2
+    return None
 
 # ========== GOOGLE SHEETS ==========
 def conectar_google_sheets():
@@ -134,7 +154,7 @@ def analizar_con_binance(symbol, cantidad, modo="venta"):
         precio = df['close'].iloc[-1]
         valor_total = cantidad * precio
         
-        # ========== LÓGICA DE COMPRA ==========
+        # Lógica de COMPRA
         if modo == "compra":
             if rsi < 20:
                 decision = "🔵 COMPRAR MUCHO"
@@ -157,9 +177,8 @@ def analizar_con_binance(symbol, cantidad, modo="venta"):
                 razon = f"RSI {rsi:.1f} - no está barato"
                 alerta = False
         
-        # ========== LÓGICA DE VENTA ==========
+        # Lógica de VENTA
         else:
-            # Detectar oportunidades de COMPRA en modo venta (RSI bajo)
             if rsi < 25:
                 decision = "🔵 ¡OPORTUNIDAD DE COMPRA!"
                 razon = f"RSI extremadamente bajo ({rsi:.1f}) - considera comprar más"
@@ -200,29 +219,30 @@ def analizar_con_binance(symbol, cantidad, modo="venta"):
     except Exception as e:
         return None
 
-# ========== ANÁLISIS CON COINGECKO ==========
+# ========== ANÁLISIS CON COINGECKO (VERSIÓN ROBUSTA) ==========
 def analizar_con_coingecko(symbol, cantidad, modo="venta"):
+    """Analiza moneda usando CoinGecko con reintentos"""
     if symbol not in MAPEO_COINGECKO:
         return None
     
     gecko_id = MAPEO_COINGECKO[symbol]
     try:
-        # Obtener precio actual
+        # Obtener precio con reintentos
         url_price = f"https://api.coingecko.com/api/v3/simple/price?ids={gecko_id}&vs_currencies=usd"
-        response = requests.get(url_price, timeout=10)
-        data = response.json()
+        data = consultar_coingecko_con_reintento(url_price)
         
-        if gecko_id not in data:
+        if not data or gecko_id not in data or 'usd' not in data[gecko_id]:
+            print(f"  ⚠️ No se pudo obtener precio para {gecko_id}")
             return None
         
         precio = data[gecko_id]['usd']
         valor_total = cantidad * precio
         
-        # Intentar obtener RSI de velas diarias
+        # Intentar obtener RSI (opcional)
         rsi_valor = "N/A"
         try:
             url_ohlc = f"https://api.coingecko.com/api/v3/coins/{gecko_id}/ohlc?vs_currency=usd&days=30"
-            ohlc_data = requests.get(url_ohlc, timeout=10).json()
+            ohlc_data = consultar_coingecko_con_reintento(url_ohlc)
             if ohlc_data and len(ohlc_data) >= 14:
                 df = pd.DataFrame(ohlc_data, columns=['timestamp', 'open', 'high', 'low', 'close'])
                 df['close'] = df['close'].astype(float)
@@ -230,35 +250,33 @@ def analizar_con_coingecko(symbol, cantidad, modo="venta"):
         except:
             pass
         
-        # Lógica mejorada para compra
-        if modo == "compra":
-            if rsi_valor != "N/A" and rsi_valor < 30:
-                decision = "🟢 COMPRAR"
-                razon = f"RSI diario {rsi_valor} - zona sobreventa"
-                alerta = True
-            elif rsi_valor != "N/A" and rsi_valor < 45:
-                decision = "⚪ OBSERVAR"
-                razon = f"RSI diario {rsi_valor} - zona neutral"
-                alerta = False
-            else:
-                decision = "⚪ PRECIO SOLO"
-                razon = f"Precio: ${precio:.4f} (sin RSI)"
-                alerta = False
+        # Decisión por defecto
+        decision = "⚪ PRECIO SOLO"
+        razon = f"Precio: ${precio:.4f}"
+        alerta = False
         
-        # Lógica mejorada para venta
-        else:
-            if rsi_valor != "N/A" and rsi_valor > 70:
-                decision = "🟡 REVISAR VENTA"
-                razon = f"RSI diario {rsi_valor} - sobrecompra"
-                alerta = False
-            elif rsi_valor != "N/A" and rsi_valor < 30:
-                decision = "🟢 OPORTUNIDAD COMPRA"
-                razon = f"RSI diario {rsi_valor} - zona sobreventa"
-                alerta = True
-            else:
-                decision = "⚪ SIN SEÑAL"
-                razon = f"Precio: ${precio:.4f} (RSI no disponible)"
-                alerta = False
+        # Mejorar decisión si tenemos RSI
+        if rsi_valor != "N/A":
+            if modo == "compra":
+                if rsi_valor < 25:
+                    decision = "🔵 COMPRAR MUCHO"
+                    razon = f"RSI diario {rsi_valor} - extremo"
+                    alerta = True
+                elif rsi_valor < 30:
+                    decision = "🟢 COMPRAR"
+                    razon = f"RSI diario {rsi_valor} - zona sobreventa"
+                    alerta = True
+                elif rsi_valor < 45:
+                    decision = "⚪ OBSERVAR"
+                    razon = f"RSI diario {rsi_valor}"
+            else:  # modo venta
+                if rsi_valor < 30:
+                    decision = "🟢 OPORTUNIDAD COMPRA"
+                    razon = f"RSI diario {rsi_valor} - zona sobreventa"
+                    alerta = True
+                elif rsi_valor > 70:
+                    decision = "🟡 REVISAR VENTA"
+                    razon = f"RSI diario {rsi_valor} - sobrecompra"
         
         return {
             "moneda": symbol.upper(),
@@ -272,30 +290,29 @@ def analizar_con_coingecko(symbol, cantidad, modo="venta"):
             "fuente": "CoinGecko"
         }
     except Exception as e:
-        print(f"  ❌ Error CoinGecko: {e}")
+        print(f"  ❌ Error CoinGecko para {symbol}: {e}")
         return None
-        
+
 # ========== ANÁLISIS INTELIGENTE ==========
 def analizar_moneda(symbol, cantidad, modo="venta"):
-    """Intenta Binance primero, luego CoinGecko"""
+    """Intenta Binance primero, luego CoinGecko con reintentos"""
     
     # 1. Intentar Binance
     resultado = analizar_con_binance(symbol, cantidad, modo)
-    
     if resultado:
         return resultado
     
     # 2. Si falla, intentar CoinGecko
-    resultado = analizar_con_coingecko(symbol, cantidad, modo)
+    if symbol in MAPEO_COINGECKO:
+        resultado = analizar_con_coingecko(symbol, cantidad, modo)
+        if resultado:
+            return resultado
     
-    if resultado:
-        return resultado
-    
-    # 3. No encontrada en ninguna parte
+    # 3. No encontrada
     return {
         "moneda": symbol.upper(),
         "decision": "❌ NO SOPORTADA",
-        "razon": "No encontrada en Binance ni CoinGecko",
+        "razon": f"No encontrada en Binance ni CoinGecko",
         "alerta": False,
         "modo": modo,
         "fuente": "Ninguna"
@@ -307,7 +324,6 @@ def procesar_lista(portafolio, modo):
     resultados = []
     for moneda, cantidad in portafolio.items():
         print(f"🔍 Analizando {moneda.upper()} ({modo})...")
-        
         resultado = analizar_moneda(moneda, cantidad, modo)
         resultados.append(resultado)
         
@@ -316,7 +332,6 @@ def procesar_lista(portafolio, modo):
             if modo == "compra":
                 icono = "💰 OPORTUNIDAD DE COMPRA"
             else:
-                # Detectar si es alerta de compra o venta
                 if "COMPRA" in resultado['decision']:
                     icono = "💰 OPORTUNIDAD DE COMPRA"
                 else:
@@ -336,7 +351,7 @@ def procesar_lista(portafolio, modo):
 ⏰ *Hora:* {datetime.now().strftime('%H:%M %d/%m/%Y')}"""
             enviar_telegram(mensaje)
         
-        time.sleep(1)  # Evitar rate limit
+        time.sleep(2)  # Pausa de 2 segundos entre monedas
     
     return resultados
 
@@ -371,7 +386,7 @@ def mostrar_bienvenida():
 def main():
     mostrar_bienvenida()
     
-    # 1. Leer y procesar monedas para VENTA (las que tienes)
+    # 1. Leer y procesar monedas para VENTA
     print("\n📊 Cargando monedas para VENTA...")
     ventas = leer_portafolio(VENTAS_SHEET_NAME)
     resultados_venta = []
@@ -379,7 +394,7 @@ def main():
         resultados_venta = procesar_lista(ventas, "venta")
         mostrar_reporte(resultados_venta, "📉 SEÑALES DE VENTA Y OPORTUNIDADES")
     
-    # 2. Leer y procesar monedas para COMPRA (watchlist)
+    # 2. Leer y procesar monedas para COMPRA
     print("\n📊 Cargando monedas para COMPRA...")
     compras = leer_portafolio(COMPRAS_SHEET_NAME)
     resultados_compra = []
@@ -392,7 +407,6 @@ def main():
         print("❌ No se encontraron monedas en ningún archivo.")
         return
     
-    # Contar alertas
     total_alertas = sum(1 for r in resultados_venta + resultados_compra if r.get('alerta', False))
     
     print("\n" + "=" * 60)
