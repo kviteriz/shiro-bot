@@ -202,7 +202,6 @@ def analizar_con_binance(symbol, cantidad, modo="venta"):
 
 # ========== ANÁLISIS CON COINGECKO ==========
 def analizar_con_coingecko(symbol, cantidad, modo="venta"):
-    """Analiza moneda usando CoinGecko (fallback)"""
     if symbol not in MAPEO_COINGECKO:
         return None
     
@@ -231,29 +230,34 @@ def analizar_con_coingecko(symbol, cantidad, modo="venta"):
         except:
             pass
         
-        # Lógica según modo y RSI disponible
+        # Lógica mejorada para compra
         if modo == "compra":
             if rsi_valor != "N/A" and rsi_valor < 30:
-                decision = "🟢 COMPRAR (CoinGecko)"
-                razon = f"RSI diario {rsi_valor}"
-                alerta = True
-            else:
-                decision = "⚪ OBSERVAR (CoinGecko)"
-                razon = "Solo precio disponible" if rsi_valor == "N/A" else f"RSI diario {rsi_valor}"
-                alerta = False
-        else:
-            # Modo venta: también detectar oportunidades de compra
-            if rsi_valor != "N/A" and rsi_valor < 30:
-                decision = "🟢 OPORTUNIDAD COMPRA (CoinGecko)"
+                decision = "🟢 COMPRAR"
                 razon = f"RSI diario {rsi_valor} - zona sobreventa"
                 alerta = True
-            elif rsi_valor != "N/A" and rsi_valor > 70:
-                decision = "🟡 REVISAR VENTA (CoinGecko)"
-                razon = f"RSI diario {rsi_valor}"
+            elif rsi_valor != "N/A" and rsi_valor < 45:
+                decision = "⚪ OBSERVAR"
+                razon = f"RSI diario {rsi_valor} - zona neutral"
                 alerta = False
             else:
-                decision = "⚪ ESPERAR (CoinGecko)"
-                razon = "Solo precio disponible" if rsi_valor == "N/A" else f"RSI diario {rsi_valor}"
+                decision = "⚪ PRECIO SOLO"
+                razon = f"Precio: ${precio:.4f} (sin RSI)"
+                alerta = False
+        
+        # Lógica mejorada para venta
+        else:
+            if rsi_valor != "N/A" and rsi_valor > 70:
+                decision = "🟡 REVISAR VENTA"
+                razon = f"RSI diario {rsi_valor} - sobrecompra"
+                alerta = False
+            elif rsi_valor != "N/A" and rsi_valor < 30:
+                decision = "🟢 OPORTUNIDAD COMPRA"
+                razon = f"RSI diario {rsi_valor} - zona sobreventa"
+                alerta = True
+            else:
+                decision = "⚪ SIN SEÑAL"
+                razon = f"Precio: ${precio:.4f} (RSI no disponible)"
                 alerta = False
         
         return {
@@ -270,7 +274,7 @@ def analizar_con_coingecko(symbol, cantidad, modo="venta"):
     except Exception as e:
         print(f"  ❌ Error CoinGecko: {e}")
         return None
-
+        
 # ========== ANÁLISIS INTELIGENTE ==========
 def analizar_moneda(symbol, cantidad, modo="venta"):
     """Intenta Binance primero, luego CoinGecko"""
