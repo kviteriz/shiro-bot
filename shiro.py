@@ -14,7 +14,8 @@ from ta.momentum import RSIIndicator
 from ta.trend import MACD
 from ta.volatility import BollingerBands
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
+import gspread
 from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -71,38 +72,48 @@ def enviar_telegram(mensaje, foto=None):
 
 # ========== GOOGLE SHEETS ==========
 def conectar_google_sheets():
+    """Conecta con Google Sheets usando credenciales modernas"""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    
     if os.getenv("GOOGLE_CREDENTIALS_JSON"):
+        import json
         creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
-        return ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    return ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    else:
+        creds = Credentials.from_service_account_file('credentials.json', scopes=scope)
+    
+    client = gspread.authorize(creds)
+    return client
+
 
 def leer_portafolio(sheet_name):
     try:
-        creds = conectar_google_sheets()
-        client = gspread.authorize(creds)
+        client = conectar_google_sheets()
         sheet = client.open(sheet_name).worksheet(WORKSHEET_NAME)
         data = sheet.get_all_records()
+        
         portafolio = {}
         for row in data:
             moneda = str(row.get('Moneda', '')).strip().lower()
             cantidad = row.get('Cantidad', 0)
             if moneda and cantidad > 0:
                 portafolio[moneda] = float(cantidad)
+        
+        print(f"🦈 Shiro cargó {len(portafolio)} monedas desde {sheet_name}")
         return portafolio
     except Exception as e:
         print(f"❌ Error leyendo {sheet_name}: {e}")
         return {}
 
+
 def guardar_historico(moneda, decision, razon, rsi, precio, take_profit=None, stop_loss=None):
     try:
-        creds = conectar_google_sheets()
-        client = gspread.authorize(creds)
+        client = conectar_google_sheets()
         try:
-            sheet = client.open(HISTORIAL_SHEET_NAME).worksheet("Señales")
-        except:
-            # Crear si no existe
             workbook = client.open(HISTORIAL_SHEET_NAME)
+            sheet = workbook.worksheet("Señales")
+        except:
+            workbook = client.create(HISTORIAL_SHEET_NAME)
             sheet = workbook.add_worksheet("Señales", 1000, 10)
             sheet.append_row(["Timestamp", "Moneda", "Decisión", "Razón", "RSI", "Precio", "Take Profit", "Stop Loss"])
         
@@ -110,6 +121,7 @@ def guardar_historico(moneda, decision, razon, rsi, precio, take_profit=None, st
     except Exception as e:
         print(f"⚠️ No se pudo guardar histórico: {e}")
 
+        
 # ========== OBTENER DATOS ==========
 def obtener_velas(symbol, timeframe="1h", limit=100):
     try:
