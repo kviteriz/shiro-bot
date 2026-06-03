@@ -1,4 +1,4 @@
-name: Shiro Bot - Análisis cada 4 horas
+name: Shiro Bot - Análisis cada 4 horas 🦈  # Añadido emoji
 
 on:
   schedule:
