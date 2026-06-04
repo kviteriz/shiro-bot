@@ -196,20 +196,27 @@ def analisis_avanzado(symbol, cantidad, modo="venta"):
     
     gecko_id = MAPEO_COINGECKO[symbol]
     
-    # Reintentar hasta 3 veces
+    # Obtener API Key desde variable de entorno
+    api_key = os.getenv("COINGECKO_API_KEY", "")
+    headers = {"x-cg-demo-api-key": api_key} if api_key else {}
+    
     for intento in range(3):
         try:
+            # Precio con API Key
             url_price = f"https://api.coingecko.com/api/v3/simple/price?ids={gecko_id}&vs_currencies=usd"
-            response = requests.get(url_price, timeout=15)
+            response = requests.get(url_price, headers=headers, timeout=15)
             
             if response.status_code == 429:
-                print(f"    ⚠️ Rate limit (intento {intento+1}/3), esperando 5s...")
-                time.sleep(5)
+                wait_time = 10 * (intento + 1)
+                print(f"    ⚠️ Rate limit (intento {intento+1}/3), esperando {wait_time}s...")
+                time.sleep(wait_time)
                 continue
                 
             if response.status_code != 200:
                 print(f"    ❌ Error HTTP {response.status_code}")
-                return None
+                if intento == 2:
+                    return None
+                continue
                 
             data = response.json()
             
@@ -221,11 +228,11 @@ def analisis_avanzado(symbol, cantidad, modo="venta"):
             valor_total = cantidad * precio
             print(f"    📊 Precio obtenido: ${precio:.4f}")
             
-            # Intentar obtener RSI (opcional)
+            # Intentar obtener RSI
             rsi_valor = 50
             try:
                 url_ohlc = f"https://api.coingecko.com/api/v3/coins/{gecko_id}/ohlc?vs_currency=usd&days=30"
-                ohlc_response = requests.get(url_ohlc, timeout=15)
+                ohlc_response = requests.get(url_ohlc, headers=headers, timeout=15)
                 if ohlc_response.status_code == 200:
                     ohlc_data = ohlc_response.json()
                     if ohlc_data and len(ohlc_data) >= 14:
@@ -234,7 +241,9 @@ def analisis_avanzado(symbol, cantidad, modo="venta"):
                         rsi_valor = round(RSIIndicator(close=df['close'], window=14).rsi().iloc[-1], 1)
                         print(f"    📊 RSI diario calculado: {rsi_valor}")
                     else:
-                        print(f"    ⚠️ Datos OHLC insuficientes (solo {len(ohlc_data) if ohlc_data else 0} velas)")
+                        print(f"    ⚠️ Datos OHLC insuficientes")
+                elif ohlc_response.status_code == 429:
+                    print(f"    ⚠️ Rate limit en RSI, usando valor neutral")
                 else:
                     print(f"    ⚠️ No se pudo obtener RSI (HTTP {ohlc_response.status_code})")
             except Exception as e:
@@ -250,7 +259,7 @@ def analisis_avanzado(symbol, cantidad, modo="venta"):
                     print(f"    🎯 ¡ALERTA DE COMPRA ACTIVADA! RSI: {rsi_valor}")
                 else:
                     decision = "⚪ ESPERAR"
-                    razon = f"RSI {rsi_valor} - fuera de zona compra (mínimo {CONFIG_SEÑALES['rsi_compra']})"
+                    razon = f"RSI {rsi_valor} - fuera de zona compra"
             else:
                 if rsi_valor > CONFIG_SEÑALES["rsi_venta"]:
                     decision = "🔴 VENDER"
@@ -259,7 +268,7 @@ def analisis_avanzado(symbol, cantidad, modo="venta"):
                     print(f"    🎯 ¡ALERTA DE VENTA ACTIVADA! RSI: {rsi_valor}")
                 else:
                     decision = "⚪ ESPERAR"
-                    razon = f"RSI {rsi_valor} - fuera de zona venta (máximo {CONFIG_SEÑALES['rsi_venta']})"
+                    razon = f"RSI {rsi_valor} - fuera de zona venta"
             
             take_profit = precio * (1 + TAKE_PROFIT_PCT / 100)
             stop_loss = precio * (1 - STOP_LOSS_PCT / 100)
@@ -272,8 +281,6 @@ def analisis_avanzado(symbol, cantidad, modo="venta"):
                 "decision": decision,
                 "razon": razon,
                 "alerta": alerta,
-                "señales_compra": 1 if alerta and modo == "compra" else 0,
-                "señales_venta": 1 if alerta and modo == "venta" else 0,
                 "take_profit": round(take_profit, 8),
                 "stop_loss": round(stop_loss, 8),
                 "modo": modo,
@@ -283,11 +290,11 @@ def analisis_avanzado(symbol, cantidad, modo="venta"):
         except Exception as e:
             print(f"    ❌ Error en intento {intento+1}: {e}")
             if intento < 2:
-                time.sleep(3)
+                time.sleep(5)
     
     print(f"    ❌ Fallaron todos los intentos para {symbol}")
     return None
-
+    
 # ========== GENERAR GRÁFICO ==========
 def generar_grafico(symbol, df, analisis):
     try:
