@@ -188,88 +188,98 @@ def calcular_soporte_resistencia(df, window=20):
 
 # ========== ANÁLISIS AVANZADO CON LOGS ==========
 def analisis_avanzado(symbol, cantidad, modo="venta"):
-    print(f"    🔍 Analizando {symbol.upper()} ({modo})...")
+    print(f"    🔍 Analizando {symbol.upper()} ({modo}) vía CoinGecko...")
     
-    resultados = {}
-    señales_compra = 0
-    señales_venta = 0
-    
-    # Obtener datos
-    df_1h = obtener_velas(symbol, "1h", 100)
-    if df_1h is None or len(df_1h) < 50:
-        print(f"    ❌ Datos insuficientes para {symbol}")
+    if symbol not in MAPEO_COINGECKO:
+        print(f"    ❌ Moneda {symbol} no está en el mapeo de CoinGecko")
         return None
     
-    rsi_1h = calcular_rsi(df_1h)
-    precio_actual = df_1h['close'].iloc[-1]
-    valor_total = cantidad * precio_actual
-    volumen_anormal, ratio_volumen = calcular_volumen_anormal(df_1h)
-    soporte, resistencia, cerca_soporte, cerca_resistencia = calcular_soporte_resistencia(df_1h)
+    gecko_id = MAPEO_COINGECKO[symbol]
     
-    print(f"    📊 RSI: {rsi_1h:.1f} | Precio: ${precio_actual:.4f} | Volumen: {ratio_volumen:.1f}x")
-    
-    # Acumular señales
-    if modo == "compra":
-        if rsi_1h < CONFIG_SEÑALES["rsi_compra"]:
-            señales_compra += 1
-            print(f"    ✅ Señal: RSI bajo ({rsi_1h:.1f} < {CONFIG_SEÑALES['rsi_compra']})")
-        if cerca_soporte:
-            señales_compra += 1
-            print(f"    ✅ Señal: Cerca de soporte (${soporte:.4f})")
-        if volumen_anormal:
-            señales_compra += 1
-            print(f"    ✅ Señal: Volumen anormal ({ratio_volumen:.1f}x)")
+    try:
+        # Obtener precio desde CoinGecko
+        url_price = f"https://api.coingecko.com/api/v3/simple/price?ids={gecko_id}&vs_currencies=usd"
+        response = requests.get(url_price, timeout=15)
+        data = response.json()
         
-        print(f"    📊 Total señales COMPRA: {señales_compra}")
+        if gecko_id not in data or 'usd' not in data[gecko_id]:
+            print(f"    ❌ No se pudo obtener precio para {gecko_id}")
+            return None
         
-        if señales_compra >= CONFIG_SEÑALES["min_señales_compra"]:
-            print(f"    🎯 *** CONDICIÓN DE COMPRA ACTIVADA! Señales: {señales_compra} ***")
-            decision = "🟢 COMPRAR"
-            razon = f"{señales_compra} indicadores positivos"
-            alerta = True
+        precio = data[gecko_id]['usd']
+        valor_total = cantidad * precio
+        
+        # Intentar obtener RSI de velas diarias
+        rsi_valor = 50  # Valor neutral por defecto
+        try:
+            url_ohlc = f"https://api.coingecko.com/api/v3/coins/{gecko_id}/ohlc?vs_currency=usd&days=30"
+            ohlc_data = requests.get(url_ohlc, timeout=15).json()
+            if ohlc_data and len(ohlc_data) >= 14:
+                df = pd.DataFrame(ohlc_data, columns=['timestamp', 'open', 'high', 'low', 'close'])
+                df['close'] = df['close'].astype(float)
+                rsi_valor = round(RSIIndicator(close=df['close'], window=14).rsi().iloc[-1], 1)
+                print(f"    📊 RSI diario calculado: {rsi_valor}")
+            else:
+                print(f"    ⚠️ Datos OHLC insuficientes para RSI")
+        except Exception as e:
+            print(f"    ⚠️ No se pudo calcular RSI: {e}")
+        
+        # Lógica de señales con RSI
+        señales_compra = 0
+        señales_venta = 0
+        alerta = False
+        
+        if modo == "compra":
+            if rsi_valor < CONFIG_SEÑALES["rsi_compra"]:
+                señales_compra += 1
+                print(f"    ✅ RSI bajo: {rsi_valor} < {CONFIG_SEÑALES['rsi_compra']}")
+            
+            if señales_compra >= CONFIG_SEÑALES["min_señales_compra"]:
+                decision = "🟢 COMPRAR"
+                razon = f"RSI {rsi_valor} - zona de compra"
+                alerta = True
+                print(f"    🎯 ¡ALERTA DE COMPRA ACTIVADA!")
+            else:
+                decision = "⚪ ESPERAR"
+                razon = f"RSI {rsi_valor} - fuera de zona"
+                alerta = False
         else:
-            print(f"    ⚪ Condición NO activada (necesita {CONFIG_SEÑALES['min_señales_compra']} señal, tiene {señales_compra})")
-            decision = "⚪ ESPERAR"
-            razon = "Sin señales suficientes"
-            alerta = False
-    else:
-        # Modo venta
-        if rsi_1h > CONFIG_SEÑALES["rsi_venta"]:
-            señales_venta += 1
-        if cerca_resistencia:
-            señales_venta += 1
-        if volumen_anormal:
-            señales_venta += 1
+            if rsi_valor > CONFIG_SEÑALES["rsi_venta"]:
+                señales_venta += 1
+                print(f"    ✅ RSI alto: {rsi_valor} > {CONFIG_SEÑALES['rsi_venta']}")
+            
+            if señales_venta >= CONFIG_SEÑALES["min_señales_venta"]:
+                decision = "🔴 VENDER"
+                razon = f"RSI {rsi_valor} - zona de venta"
+                alerta = True
+                print(f"    🎯 ¡ALERTA DE VENTA ACTIVADA!")
+            else:
+                decision = "⚪ ESPERAR"
+                razon = f"RSI {rsi_valor} - fuera de zona"
+                alerta = False
         
-        if señales_venta >= CONFIG_SEÑALES["min_señales_venta"]:
-            decision = "🔴 VENDER"
-            razon = f"{señales_venta} indicadores negativos"
-            alerta = True
-        else:
-            decision = "⚪ ESPERAR"
-            razon = "Sin señales de venta"
-            alerta = False
-    
-    # Take profit / Stop loss
-    take_profit = precio_actual * (1 + TAKE_PROFIT_PCT / 100)
-    stop_loss = precio_actual * (1 - STOP_LOSS_PCT / 100)
-    
-    return {
-        "moneda": symbol.upper(),
-        "precio": round(precio_actual, 8),
-        "valor_usdt": round(valor_total, 2),
-        "rsi": round(rsi_1h, 1),
-        "decision": decision,
-        "razon": razon,
-        "alerta": alerta,
-        "señales_compra": señales_compra,
-        "señales_venta": señales_venta,
-        "take_profit": round(take_profit, 8),
-        "stop_loss": round(stop_loss, 8),
-        "modo": modo,
-        "fuente": "Binance"
-    }
-
+        take_profit = precio * (1 + TAKE_PROFIT_PCT / 100)
+        stop_loss = precio * (1 - STOP_LOSS_PCT / 100)
+        
+        return {
+            "moneda": symbol.upper(),
+            "precio": round(precio, 8),
+            "valor_usdt": round(valor_total, 2),
+            "rsi": rsi_valor,
+            "decision": decision,
+            "razon": razon,
+            "alerta": alerta,
+            "señales_compra": señales_compra,
+            "señales_venta": señales_venta,
+            "take_profit": round(take_profit, 8),
+            "stop_loss": round(stop_loss, 8),
+            "modo": modo,
+            "fuente": "CoinGecko"
+        }
+        
+    except Exception as e:
+        print(f"    ❌ Error en CoinGecko para {symbol}: {e}")
+        return None
 # ========== GENERAR GRÁFICO ==========
 def generar_grafico(symbol, df, analisis):
     try:
