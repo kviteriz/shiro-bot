@@ -1,4 +1,4 @@
-# shiro.py - Shiro Bot v3.0 - NIVEL DE SEÑALES BAJO
+# shiro.py - Shiro Bot v3.0 - CON LOGS DE DEPURACIÓN
 # Configuración: RSI compra <45, RSI venta >55, alerta con 1 señal
 
 import os
@@ -20,6 +20,8 @@ from io import BytesIO
 
 load_dotenv()
 
+print("🔧 SHIRO BOT INICIANDO - MODO DEPURACIÓN ACTIVADO")
+
 # ========== CONFIGURACIÓN ==========
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -30,24 +32,28 @@ WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "Portafolio")
 HISTORIAL_SHEET_NAME = os.getenv("HISTORIAL_SHEET_NAME", "Historial Shiro")
 
 # Configuración de trading
-CAPITAL_TOTAL = float(os.getenv("CAPITAL_TOTAL", "10000"))  # USD
-RIESGO_POR_OPERACION = float(os.getenv("RIESGO_POR_OPERACION", "2"))  # 2%
-TAKE_PROFIT_PCT = float(os.getenv("TAKE_PROFIT_PCT", "15"))  # 15%
-STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "8"))  # 8%
-TRAILING_STOP_PCT = float(os.getenv("TRAILING_STOP_PCT", "5"))  # 5%
-DIVERSIFICACION_MAX = float(os.getenv("DIVERSIFICACION_MAX", "20"))  # 20% por moneda
+CAPITAL_TOTAL = float(os.getenv("CAPITAL_TOTAL", "5000"))
+RIESGO_POR_OPERACION = float(os.getenv("RIESGO_POR_OPERACION", "2"))
+TAKE_PROFIT_PCT = float(os.getenv("TAKE_PROFIT_PCT", "15"))
+STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "8"))
+TRAILING_STOP_PCT = float(os.getenv("TRAILING_STOP_PCT", "5"))
+DIVERSIFICACION_MAX = float(os.getenv("DIVERSIFICACION_MAX", "20"))
 
-# ========== CONFIGURACIÓN DE SEÑALES (NIVEL BAJO) ==========
+print(f"📊 Configuración cargada: CAPITAL_TOTAL={CAPITAL_TOTAL}")
+
+# ========== CONFIGURACIÓN DE SEÑALES ==========
 CONFIG_SEÑALES = {
-    "rsi_compra": 45,        # RSI bajo este valor genera señal de compra
-    "rsi_venta": 55,         # RSI sobre este valor genera señal de venta
-    "min_señales_compra": 1,  # Número mínimo de indicadores para alertar compra
-    "min_señales_venta": 1,   # Número mínimo de indicadores para alertar venta
-    "volumen_factor": 1.2,    # Volumen anormal si supera 1.2x promedio
-    "bb_alta_volatilidad": 0.1,  # 10% de ancho de Bollinger Bands
+    "rsi_compra": 45,
+    "rsi_venta": 55,
+    "min_señales_compra": 1,
+    "min_señales_venta": 1,
+    "volumen_factor": 1.2,
+    "bb_alta_volatilidad": 0.1,
 }
 
-# ========== MAPEO COMPLETO DE COINGECKO ==========
+print(f"🎯 Señales: RSI compra <{CONFIG_SEÑALES['rsi_compra']} | RSI venta >{CONFIG_SEÑALES['rsi_venta']}")
+
+# ========== MAPEO COINGECKO ==========
 MAPEO_COINGECKO = {
     'btc': 'bitcoin', 'eth': 'ethereum', 'sol': 'solana', 'sui': 'sui',
     'hbar': 'hedera-hashgraph', 'doge': 'dogecoin', 'pepe': 'pepe',
@@ -60,38 +66,45 @@ MAPEO_COINGECKO = {
 # ========== VARIABLES GLOBALES ==========
 historial_señales = []
 portafolio_actual = {}
-precios_maximos = {}  # Para trailing stop
+precios_maximos = {}
 
 # ========== TELEGRAM ==========
 def enviar_telegram(mensaje, foto=None):
+    print(f"📱 Intentando enviar mensaje a Telegram...")
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠️ Telegram no configurado")
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         if foto:
             url_foto = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
             requests.post(url_foto, data={"chat_id": TELEGRAM_CHAT_ID, "caption": mensaje}, files={"photo": foto})
+            print("📱 Foto enviada a Telegram")
         else:
             requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": f"🦈 *SHIRO BOT*\n\n{mensaje}", "parse_mode": "Markdown"}, timeout=15)
+            print("📱 Mensaje enviado a Telegram")
     except Exception as e:
         print(f"❌ Error Telegram: {e}")
 
 # ========== GOOGLE SHEETS ==========
 def conectar_google_sheets():
-    """Conecta con Google Sheets usando credenciales modernas"""
+    print("🔌 Conectando a Google Sheets...")
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
     if os.getenv("GOOGLE_CREDENTIALS_JSON"):
         import json
         creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        print("✅ Conectado con credenciales desde variable de entorno")
     else:
         creds = Credentials.from_service_account_file('credentials.json', scopes=scope)
+        print("✅ Conectado con archivo credentials.json")
     
     client = gspread.authorize(creds)
     return client
 
 def leer_portafolio(sheet_name):
+    print(f"📊 Leyendo portafolio desde {sheet_name}...")
     try:
         client = conectar_google_sheets()
         sheet = client.open(sheet_name).worksheet(WORKSHEET_NAME)
@@ -104,26 +117,11 @@ def leer_portafolio(sheet_name):
             if moneda and cantidad > 0:
                 portafolio[moneda] = float(cantidad)
         
-        print(f"🦈 Shiro cargó {len(portafolio)} monedas desde {sheet_name}")
+        print(f"  ✅ Cargadas {len(portafolio)} monedas: {list(portafolio.keys())}")
         return portafolio
     except Exception as e:
-        print(f"❌ Error leyendo {sheet_name}: {e}")
+        print(f"  ❌ Error leyendo {sheet_name}: {e}")
         return {}
-
-def guardar_historico(moneda, decision, razon, rsi, precio, take_profit=None, stop_loss=None):
-    try:
-        client = conectar_google_sheets()
-        try:
-            workbook = client.open(HISTORIAL_SHEET_NAME)
-            sheet = workbook.worksheet("Señales")
-        except:
-            workbook = client.create(HISTORIAL_SHEET_NAME)
-            sheet = workbook.add_worksheet("Señales", 1000, 10)
-            sheet.append_row(["Timestamp", "Moneda", "Decisión", "Razón", "RSI", "Precio", "Take Profit", "Stop Loss"])
-        
-        sheet.append_row([datetime.now().isoformat(), moneda, decision, razon, rsi, precio, take_profit or "", stop_loss or ""])
-    except Exception as e:
-        print(f"⚠️ No se pudo guardar histórico: {e}")
 
 # ========== OBTENER DATOS ==========
 def obtener_velas(symbol, timeframe="1h", limit=100):
@@ -140,29 +138,13 @@ def obtener_velas(symbol, timeframe="1h", limit=100):
         df['volume'] = df['volume'].astype(float)
         df['time'] = pd.to_datetime(df['time'], unit='ms')
         return df
-    except:
-        return None
-
-def obtener_precio_coingecko(gecko_id):
-    try:
-        url = f"https://api.coingecko.com/api/v3/simple/price?ids={gecko_id}&vs_currencies=usd"
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        return data.get(gecko_id, {}).get('usd', None)
-    except:
+    except Exception as e:
+        print(f"    ❌ Error obteniendo velas de {symbol}: {e}")
         return None
 
 # ========== INDICADORES TÉCNICOS ==========
 def calcular_rsi(df, period=14):
     return RSIIndicator(close=df['close'], window=period).rsi().iloc[-1]
-
-def calcular_macd(df):
-    macd = MACD(close=df['close'])
-    return macd.macd().iloc[-1], macd.macd_signal().iloc[-1]
-
-def calcular_bollinger_bands(df, period=20, std=2):
-    bb = BollingerBands(close=df['close'], window=period, window_dev=std)
-    return bb.bollinger_hband().iloc[-1], bb.bollinger_lband().iloc[-1]
 
 def calcular_volumen_anormal(df, factor=None):
     if factor is None:
@@ -179,203 +161,86 @@ def calcular_soporte_resistencia(df, window=20):
     cerca_soporte = (precio_actual - low) / precio_actual < 0.02
     return high, low, cerca_resistencia, cerca_soporte
 
-def calcular_correlacion_btc(df_moneda, df_btc):
-    if df_moneda is None or df_btc is None or len(df_moneda) < 30 or len(df_btc) < 30:
-        return 0, "sin datos"
-    ret_moneda = df_moneda['close'].pct_change().dropna()
-    ret_btc = df_btc['close'].pct_change().dropna()
-    min_len = min(len(ret_moneda), len(ret_btc))
-    if min_len < 10:
-        return 0, "sin datos"
-    correlacion = ret_moneda.iloc[-min_len:].corr(ret_btc.iloc[-min_len:])
-    if correlacion > 0.7:
-        return correlacion, "alta correlación con BTC"
-    elif correlacion < 0.3:
-        return correlacion, "⚠️ baja correlación - se mueve independiente"
-    return correlacion, "correlación normal"
-
-# ========== GESTIÓN DE POSICIÓN ==========
-def calcular_tamano_posicion(capital, riesgo_pct, precio, stop_loss_pct):
-    riesgo_por_operacion = capital * (riesgo_pct / 100)
-    stop_loss_price = precio * (1 - stop_loss_pct / 100)
-    cantidad = riesgo_por_operacion / (precio - stop_loss_price) if (precio - stop_loss_price) > 0 else 0
-    return cantidad, stop_loss_price
-
-def calcular_take_profit(precio, take_profit_pct):
-    return precio * (1 + take_profit_pct / 100)
-
-def calcular_trailing_stop(precio_actual, maximo_anterior, trailing_pct):
-    stop_loss = maximo_anterior * (1 - trailing_pct / 100)
-    return stop_loss, precio_actual <= stop_loss
-
-def verificar_diversificacion(portafolio, nueva_moneda, precio, cantidad):
-    valor_nuevo = precio * cantidad
-    valor_total = sum(portafolio.values()) + valor_nuevo
-    if valor_total == 0:
-        return True, 0
-    porcentaje = (valor_nuevo / valor_total) * 100
-    return porcentaje <= DIVERSIFICACION_MAX, porcentaje
-
-# ========== ANÁLISIS AVANZADO (NIVEL BAJO) ==========
+# ========== ANÁLISIS AVANZADO CON LOGS ==========
 def analisis_avanzado(symbol, cantidad, modo="venta"):
+    print(f"    🔍 Analizando {symbol.upper()} ({modo})...")
+    
     resultados = {}
     señales_compra = 0
     señales_venta = 0
     
-    # 1. Múltiples timeframes
-    timeframes = {"1h": 1, "4h": 2, "1d": 3}
-    rsis = {}
-    for tf in timeframes:
-        df = obtener_velas(symbol, tf)
-        if df is not None and len(df) > 30:
-            rsis[tf] = calcular_rsi(df)
-            resultados[f"rsi_{tf}"] = rsis[tf]
-            
-            if modo == "compra":
-                if rsis[tf] < CONFIG_SEÑALES["rsi_compra"]:
-                    señales_compra += timeframes[tf]
-            else:
-                if rsis[tf] > CONFIG_SEÑALES["rsi_venta"]:
-                    señales_venta += timeframes[tf]
-    
-    # Usar timeframe 1h para indicadores adicionales
+    # Obtener datos
     df_1h = obtener_velas(symbol, "1h", 100)
     if df_1h is None or len(df_1h) < 50:
+        print(f"    ❌ Datos insuficientes para {symbol}")
         return None
     
     rsi_1h = calcular_rsi(df_1h)
-    macd_line, signal_line = calcular_macd(df_1h)
-    bb_upper, bb_lower = calcular_bollinger_bands(df_1h)
     precio_actual = df_1h['close'].iloc[-1]
     valor_total = cantidad * precio_actual
     volumen_anormal, ratio_volumen = calcular_volumen_anormal(df_1h)
     soporte, resistencia, cerca_soporte, cerca_resistencia = calcular_soporte_resistencia(df_1h)
     
-    # 2. Bollinger Bands
-    bb_ancho = (bb_upper - bb_lower) / precio_actual
-    if bb_ancho > CONFIG_SEÑALES["bb_alta_volatilidad"]:
-        resultados["bb_alta_volatilidad"] = True
-        print(f"  📊 Bollinger Bands: alta volatilidad ({bb_ancho:.1%})")
+    print(f"    📊 RSI: {rsi_1h:.1f} | Precio: ${precio_actual:.4f} | Volumen: {ratio_volumen:.1f}x")
     
-    # 3. Volumen anormal
-    if volumen_anormal:
-        señales_compra += 1 if modo == "compra" else 0
-        señales_venta += 1 if modo == "venta" else 0
-        print(f"  📊 Volumen {ratio_volumen:.1f}x promedio - inusual")
-    
-    # 4. Soporte/Resistencia
-    if cerca_soporte:
-        señales_compra += 1
-        print(f"  📊 Precio cerca de soporte (${soporte:.4f})")
-    if cerca_resistencia:
-        señales_venta += 1
-        print(f"  📊 Precio cerca de resistencia (${resistencia:.4f})")
-    
-    # 5. Correlación con BTC
-    df_btc = obtener_velas("btc", "1h", 50)
-    correlacion, msg_corr = calcular_correlacion_btc(df_1h, df_btc)
-    resultados["correlacion_btc"] = correlacion
-    if correlacion < 0.3 and correlacion > 0:
-        print(f"  📊 {msg_corr} (correl: {correlacion:.2f})")
-    
-    # 6. Confirmación múltiple (NIVEL BAJO)
+    # Acumular señales
     if modo == "compra":
         if rsi_1h < CONFIG_SEÑALES["rsi_compra"]:
             señales_compra += 1
-        if precio_actual < bb_lower:
-            señales_compra += 1
+            print(f"    ✅ Señal: RSI bajo ({rsi_1h:.1f} < {CONFIG_SEÑALES['rsi_compra']})")
         if cerca_soporte:
             señales_compra += 1
+            print(f"    ✅ Señal: Cerca de soporte (${soporte:.4f})")
         if volumen_anormal:
             señales_compra += 1
+            print(f"    ✅ Señal: Volumen anormal ({ratio_volumen:.1f}x)")
         
-        # Alertas con menos señales (nivel bajo)
-        if señales_compra >= 3:
-            decision = "🔵 COMPRAR MUCHO"
-            razon = f"Señal fuerte: {señales_compra} indicadores"
-            alerta = True
-        elif señales_compra >= 2:
+        print(f"    📊 Total señales COMPRA: {señales_compra}")
+        
+        if señales_compra >= CONFIG_SEÑALES["min_señales_compra"]:
+            print(f"    🎯 *** CONDICIÓN DE COMPRA ACTIVADA! Señales: {señales_compra} ***")
             decision = "🟢 COMPRAR"
-            razon = f"Señal moderada: {señales_compra} indicadores"
+            razon = f"{señales_compra} indicadores positivos"
             alerta = True
-        elif señales_compra >= CONFIG_SEÑALES["min_señales_compra"]:
-            decision = "🟡 CONSIDERAR COMPRA"
-            razon = f"Señal débil: {señales_compra} indicadores"
-            alerta = True  # AHORA ALERTA
         else:
+            print(f"    ⚪ Condición NO activada (necesita {CONFIG_SEÑALES['min_señales_compra']} señal, tiene {señales_compra})")
             decision = "⚪ ESPERAR"
-            razon = f"Sin señales claras"
+            razon = "Sin señales suficientes"
             alerta = False
     else:
+        # Modo venta
         if rsi_1h > CONFIG_SEÑALES["rsi_venta"]:
-            señales_venta += 1
-        if precio_actual > bb_upper:
             señales_venta += 1
         if cerca_resistencia:
             señales_venta += 1
+        if volumen_anormal:
+            señales_venta += 1
         
-        # Alertas con menos señales (nivel bajo)
-        if señales_venta >= 3:
-            decision = "🔴 VENDER YA"
-            razon = f"Señal fuerte de venta"
+        if señales_venta >= CONFIG_SEÑALES["min_señales_venta"]:
+            decision = "🔴 VENDER"
+            razon = f"{señales_venta} indicadores negativos"
             alerta = True
-        elif señales_venta >= 2:
-            decision = "🟡 VENDER PARCIAL"
-            razon = f"Señal moderada de venta"
-            alerta = True
-        elif señales_venta >= CONFIG_SEÑALES["min_señales_venta"]:
-            decision = "🟡 CONSIDERAR VENTA"
-            razon = f"Señal débil de venta"
-            alerta = True  # NUEVO
         else:
             decision = "⚪ ESPERAR"
-            razon = f"Sin señales de venta"
+            razon = "Sin señales de venta"
             alerta = False
     
-    # 7. Take profit / Stop loss
-    take_profit = calcular_take_profit(precio_actual, TAKE_PROFIT_PCT)
+    # Take profit / Stop loss
+    take_profit = precio_actual * (1 + TAKE_PROFIT_PCT / 100)
     stop_loss = precio_actual * (1 - STOP_LOSS_PCT / 100)
-    
-    # 8. Trailing stop
-    global precios_maximos
-    if symbol not in precios_maximos:
-        precios_maximos[symbol] = precio_actual
-    else:
-        precios_maximos[symbol] = max(precios_maximos[symbol], precio_actual)
-    
-    trailing_stop, activar_trailing = calcular_trailing_stop(precio_actual, precios_maximos[symbol], TRAILING_STOP_PCT)
-    
-    if activar_trailing and modo == "venta":
-        decision = "🔴 ACTIVAR TRAILING STOP"
-        razon = f"Stop loss dinámico en ${trailing_stop:.4f}"
-        alerta = True
-    
-    # 9. Diversificación
-    global portafolio_actual
-    diversifica_ok, porcentaje = verificar_diversificacion(portafolio_actual, symbol, precio_actual, cantidad)
-    if not diversifica_ok:
-        print(f"  ⚠️ Excede límite de diversificación: {porcentaje:.1f}% > {DIVERSIFICACION_MAX}%")
     
     return {
         "moneda": symbol.upper(),
         "precio": round(precio_actual, 8),
         "valor_usdt": round(valor_total, 2),
         "rsi": round(rsi_1h, 1),
-        "rsi_4h": round(rsis.get("4h", 0), 1) if "4h" in rsis else "N/A",
-        "rsi_1d": round(rsis.get("1d", 0), 1) if "1d" in rsis else "N/A",
-        "correlacion_btc": round(correlacion, 2) if correlacion else "N/A",
-        "volumen_anormal": volumen_anormal,
-        "ratio_volumen": round(ratio_volumen, 1),
-        "soporte": round(soporte, 8),
-        "resistencia": round(resistencia, 8),
-        "take_profit": round(take_profit, 8),
-        "stop_loss": round(stop_loss, 8),
-        "trailing_stop": round(trailing_stop, 8),
         "decision": decision,
         "razon": razon,
         "alerta": alerta,
         "señales_compra": señales_compra,
         "señales_venta": señales_venta,
+        "take_profit": round(take_profit, 8),
+        "stop_loss": round(stop_loss, 8),
         "modo": modo,
         "fuente": "Binance"
     }
@@ -389,21 +254,6 @@ def generar_grafico(symbol, df, analisis):
         ax1.set_title(f'{symbol.upper()} - Análisis Técnico', fontsize=14)
         ax1.set_ylabel('Precio USDT')
         
-        bb = BollingerBands(close=df['close'], window=20, window_dev=2)
-        upper = bb.bollinger_hband()
-        lower = bb.bollinger_lband()
-        ax1.plot(df['time'], upper, label='Banda Superior', color='gray', linestyle='--', alpha=0.7)
-        ax1.plot(df['time'], lower, label='Banda Inferior', color='gray', linestyle='--', alpha=0.7)
-        
-        if analisis.get('soporte'):
-            ax1.axhline(y=analisis['soporte'], color='green', linestyle='-', alpha=0.5, label=f"Soporte: ${analisis['soporte']:.4f}")
-        if analisis.get('resistencia'):
-            ax1.axhline(y=analisis['resistencia'], color='red', linestyle='-', alpha=0.5, label=f"Resistencia: ${analisis['resistencia']:.4f}")
-        
-        ax1.legend(loc='upper left')
-        ax1.grid(True, alpha=0.3)
-        
-        rsi = RSIIndicator(close=df['close'], window=14).rsi()
         ax2.plot(df['time'], rsi, label='RSI', color='purple', linewidth=1)
         ax2.axhline(y=70, color='red', linestyle='--', alpha=0.5, label='Sobrecompra (70)')
         ax2.axhline(y=30, color='green', linestyle='--', alpha=0.5, label='Sobreventa (30)')
@@ -426,36 +276,64 @@ def generar_grafico(symbol, df, analisis):
         print(f"⚠️ Error generando gráfico: {e}")
         return None
 
-# ========== COMANDOS INTERACTIVOS ==========
-def comando_status():
-    global portafolio_actual
-    if not portafolio_actual:
-        return "📊 *Portafolio vacío*\n\nAgrega monedas en Google Sheets"
+# ========== PROCESAR LISTA ==========
+def procesar_lista(portafolio, modo):
+    global historial_señales, portafolio_actual
     
-    mensaje = "📊 *ESTADO DEL PORTAFOLIO*\n\n"
-    valor_total = sum(portafolio_actual.values())
-    
-    for moneda, valor in sorted(portafolio_actual.items(), key=lambda x: x[1], reverse=True):
-        porcentaje = (valor / valor_total * 100) if valor_total > 0 else 0
-        mensaje += f"• *{moneda.upper()}*: ${valor:.2f} ({porcentaje:.1f}%)\n"
-    
-    mensaje += f"\n💰 *Capital total*: ${valor_total:.2f}"
-    return mensaje
+    resultados = []
+    for moneda, cantidad in portafolio.items():
+        print(f"\n🔍 Analizando {moneda.upper()} ({modo})...")
+        
+        if moneda in MAPEO_COINGECKO:
+            resultado = analisis_avanzado(moneda, cantidad, modo)
+        else:
+            print(f"  ❌ Moneda {moneda} no está en el mapeo de CoinGecko")
+            resultado = None
+        
+        if resultado:
+            print(f"  📊 Resultado: {resultado['decision']} | Alerta: {resultado['alerta']}")
+            resultados.append(resultado)
+            portafolio_actual[resultado['moneda']] = resultado['valor_usdt']
+            
+            if resultado['alerta']:
+                print(f"  🚨 ¡ALERTA GENERADA para {moneda.upper()}!")
+                historial_señales.append({
+                    "timestamp": datetime.now(),
+                    "moneda": resultado['moneda'],
+                    "decision": resultado['decision'],
+                    "rsi": resultado['rsi']
+                })
+                
+                # Gráfico
+                df = obtener_velas(moneda, "1h", 100)
+                if df is not None:
+                    grafico = generar_grafico(moneda, df, resultado)
+                else:
+                    grafico = None
+                
+                mensaje = f"""💰 OPORTUNIDAD DE {'COMPRA' if 'COMPRA' in resultado['decision'] else 'VENTA'}
 
-def comando_analizar(moneda, cantidad):
-    resultado = analisis_avanzado(moneda, cantidad)
-    if resultado:
-        return f"""📊 *Análisis de {moneda.upper()}*
-
+📊 *Moneda:* {resultado['moneda']}
 🎯 *Decisión:* {resultado['decision']}
-📉 *RSI 1h/4h/1d:* {resultado['rsi']} / {resultado.get('rsi_4h', 'N/A')} / {resultado.get('rsi_1d', 'N/A')}
-🔗 *Correlación BTC:* {resultado.get('correlacion_btc', 'N/A')}
-💰 *Precio:* ${resultado['precio']:.4f}
-📈 *Take Profit:* ${resultado.get('take_profit', 0):.4f}
-📉 *Stop Loss:* ${resultado.get('stop_loss', 0):.4f}
+📉 *RSI:* {resultado['rsi']}
+📈 *Precio:* ${resultado['precio']:.4f}
+💰 *Valor:* ${resultado['valor_usdt']:.2f}
+📈 *Take Profit:* ${resultado['take_profit']:.4f}
+📉 *Stop Loss:* ${resultado['stop_loss']:.4f}
+🎯 *Señales:* {resultado.get('señales_compra', resultado.get('señales_venta', 0))} indicadores
 
-🔍 *Motivo:* {resultado['razon']}"""
-    return f"❌ No se pudo analizar {moneda}"
+🔍 *Motivo:* {resultado['razon']}
+⏰ *Hora:* {datetime.now().strftime('%H:%M %d/%m/%Y')}"""
+                enviar_telegram(mensaje, grafico)
+            else:
+                print(f"  🔕 No se generó alerta para {moneda.upper()}")
+        else:
+            print(f"  ❌ Análisis falló para {moneda.upper()}")
+            resultados.append({"moneda": moneda.upper(), "decision": "❌ ERROR", "alerta": False})
+        
+        time.sleep(2)
+    
+    return resultados
 
 # ========== REPORTE DIARIO ==========
 def enviar_reporte_diario():
@@ -472,83 +350,19 @@ def enviar_reporte_diario():
     
     enviar_telegram(mensaje)
 
-# ========== PROCESAR LISTA ==========
-def procesar_lista(portafolio, modo):
-    global historial_señales, portafolio_actual
-    
-    resultados = []
-    for moneda, cantidad in portafolio.items():
-        print(f"🔍 Analizando {moneda.upper()} ({modo})...")
-        
-        if moneda in MAPEO_COINGECKO:
-            resultado = analisis_avanzado(moneda, cantidad, modo)
-        else:
-            resultado = None
-        
-        if resultado:
-            resultados.append(resultado)
-            portafolio_actual[resultado['moneda']] = resultado['valor_usdt']
-            
-            if resultado['alerta']:
-                historial_señales.append({
-                    "timestamp": datetime.now(),
-                    "moneda": resultado['moneda'],
-                    "decision": resultado['decision'],
-                    "rsi": resultado['rsi']
-                })
-                guardar_historico(
-                    resultado['moneda'], resultado['decision'], resultado['razon'],
-                    resultado['rsi'], resultado['precio'],
-                    resultado.get('take_profit'), resultado.get('stop_loss')
-                )
-                
-                df = obtener_velas(moneda, "1h", 100)
-                if df is not None:
-                    grafico = generar_grafico(moneda, df, resultado)
-                else:
-                    grafico = None
-                
-                mensaje = f"""{'💰 OPORTUNIDAD' if 'COMPRA' in resultado['decision'] else '💸 ALERTA'}
-
-📊 *Moneda:* {resultado['moneda']}
-🎯 *Decisión:* {resultado['decision']}
-📉 *RSI:* {resultado['rsi']} (1h) | {resultado.get('rsi_4h', 'N/A')} (4h)
-🔗 *Correlación BTC:* {resultado.get('correlacion_btc', 'N/A')}
-📈 *Precio:* ${resultado['precio']:.4f}
-💰 *Valor:* ${resultado['valor_usdt']:.2f}
-📈 *Take Profit:* ${resultado.get('take_profit', 0):.4f}
-📉 *Stop Loss:* ${resultado.get('stop_loss', 0):.4f}
-📊 *Volumen:* {resultado.get('ratio_volumen', 1)}x promedio
-
-🎯 *Señales:* {resultado.get('señales_compra', resultado.get('señales_venta', 0))} indicadores
-
-🔍 *Motivo:* {resultado['razon']}
-⏰ *Hora:* {datetime.now().strftime('%H:%M %d/%m/%Y')}"""
-                enviar_telegram(mensaje, grafico)
-        else:
-            resultados.append({"moneda": moneda.upper(), "decision": "❌ NO SOPORTADA", "alerta": False})
-        
-        time.sleep(2)
-    
-    return resultados
-
 # ========== MAIN ==========
-def mostrar_bienvenida():
+def main():
     print("""
     ╔══════════════════════════════════════╗
     ║      🦈  SHIRO BOT v3.0  🦈         ║
     ║   Análisis Profesional de Trading   ║
     ║   "El tiburón del mercado"          ║
+    ║   MODO DEPURACIÓN ACTIVADO          ║
     ╚══════════════════════════════════════╝
     """)
-
-def main():
-    mostrar_bienvenida()
     
     print(f"📊 Capital total: ${CAPITAL_TOTAL} | Riesgo: {RIESGO_POR_OPERACION}%")
     print(f"📈 Take Profit: {TAKE_PROFIT_PCT}% | Stop Loss: {STOP_LOSS_PCT}%")
-    print(f"🔄 Trailing Stop: {TRAILING_STOP_PCT}% | Diversificación max: {DIVERSIFICACION_MAX}%")
-    print(f"🎯 Configuración señales: RSI compra <{CONFIG_SEÑALES['rsi_compra']} | RSI venta >{CONFIG_SEÑALES['rsi_venta']} | Mín señales: {CONFIG_SEÑALES['min_señales_compra']}")
     
     print("\n📊 Cargando monedas para VENTA...")
     ventas = leer_portafolio(VENTAS_SHEET_NAME)
