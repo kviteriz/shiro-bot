@@ -125,23 +125,48 @@ def leer_portafolio(sheet_name):
 
 # ========== OBTENER DATOS ==========
 def obtener_velas(symbol, timeframe="1h", limit=100):
+    print(f"      Intentando obtener datos de Binance para {symbol.upper()}...")
     try:
+        # Primero, probar la conexión con un timeout más largo
         url = f'https://api.binance.com/api/v3/klines?symbol={symbol.upper()}USDT&interval={timeframe}&limit={limit}'
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        if 'code' in data or not isinstance(data, list):
+        print(f"      URL: {url}")
+        
+        response = requests.get(url, timeout=30)  # Aumentado a 30 segundos
+        print(f"      Código de respuesta HTTP: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"      ❌ Error HTTP: {response.status_code} - {response.text[:100]}")
             return None
+            
+        data = response.json()
+        print(f"      Datos recibidos, tipo: {type(data)}")
+        
+        if not isinstance(data, list):
+            print(f"      ❌ La respuesta no es una lista: {data}")
+            return None
+            
+        if len(data) < 50:
+            print(f"      ⚠️ Datos insuficientes: solo {len(data)} velas")
+            return None
+            
         df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'qa_volume', 'trades', 'taker_buy_base', 'taker_buy_quote', 'ignore'])
         df['close'] = df['close'].astype(float)
         df['high'] = df['high'].astype(float)
         df['low'] = df['low'].astype(float)
         df['volume'] = df['volume'].astype(float)
         df['time'] = pd.to_datetime(df['time'], unit='ms')
+        print(f"      ✅ Datos obtenidos correctamente para {symbol.upper()} (último precio: {df['close'].iloc[-1]})")
         return df
-    except Exception as e:
-        print(f"    ❌ Error obteniendo velas de {symbol}: {e}")
+        
+    except requests.exceptions.Timeout:
+        print(f"      ❌ Timeout conectando a Binance para {symbol}")
         return None
-
+    except requests.exceptions.ConnectionError as e:
+        print(f"      ❌ Error de conexión a Binance: {e}")
+        return None
+    except Exception as e:
+        print(f"      ❌ Error inesperado obteniendo datos de {symbol}: {e}")
+        return None
 # ========== INDICADORES TÉCNICOS ==========
 def calcular_rsi(df, period=14):
     return RSIIndicator(close=df['close'], window=period).rsi().iloc[-1]
